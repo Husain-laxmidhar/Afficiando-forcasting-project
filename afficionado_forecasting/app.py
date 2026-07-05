@@ -1,20 +1,4 @@
-"""
-Streamlit dashboard for Afficionado Coffee Roasters demand forecasting.
 
-Run with:
-    conda activate acr-forecasting
-    streamlit run app.py
-
-Core modules implemented (per the project spec):
-    - Store-wise sales forecast charts
-    - Hourly demand heatmap (average, by hour x day-of-week -- "future" demand pattern)
-    - Model selection & comparison
-    - Confidence interval visualization
-User capabilities:
-    - Store selector
-    - Forecast horizon slider
-    - Revenue vs quantity toggle
-"""
 import numpy as np
 import pandas as pd
 import streamlit as st
