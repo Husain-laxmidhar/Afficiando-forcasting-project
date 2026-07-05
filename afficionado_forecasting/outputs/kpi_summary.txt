@@ -1,6 +1,0 @@
-KPI Summary
-========================================
-Store Forecast Stability (GBM, std of per-store MAPE): 0.96
-Per-store MAPE (GBM): {3: 11.935273851653522, 5: 11.955016974908093, 8: 13.971063386117363}
-
-Full model comparison saved to model_comparison.csv
