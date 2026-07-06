@@ -4,7 +4,8 @@ numpy==1.26.4
 plotly==5.22.0
 scikit-learn==1.5.1
 statsmodels==0.14.2
-pyarrow==16.1.0
+pyarrow==15.0.2
+setuptools>=70.0.0
 
 # Optional but recommended
 
