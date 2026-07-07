@@ -1,0 +1,17 @@
+{
+  "3": {
+    "store_location": "Astoria",
+    "best_model": "Gradient Boosting",
+    "rmse": 273.6911868589661
+  },
+  "5": {
+    "store_location": "Lower Manhattan",
+    "best_model": "Moving Average",
+    "rmse": 286.68746729901966
+  },
+  "8": {
+    "store_location": "Hell's Kitchen",
+    "best_model": "Prophet",
+    "rmse": 323.34802635059043
+  }
+}
