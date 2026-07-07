@@ -1,103 +1,91 @@
-"""
-Step 4 of the methodology: Forecasting Models.
-
-Baseline   : Naive, Moving Average
-Statistical: SARIMA, Exponential Smoothing
-Advanced   : Prophet (seasonality-aware), Gradient Boosting Regression
-
-Every `fit_*` function takes a training series/frame and a forecast horizon
-(number of steps) and returns a numpy array of predictions of that length,
-so they can be swapped into train.py interchangeably.
-"""
-import warnings
 import numpy as np
 import pandas as pd
-
-warnings.filterwarnings("ignore")
-
-
-# ---------------------------------------------------------------------------
-# Baseline models
-# ---------------------------------------------------------------------------
-def naive_forecast(train_series: pd.Series, horizon: int) -> np.ndarray:
-    """Repeats the last observed value for the whole horizon."""
-    last_value = train_series.iloc[-1]
-    return np.full(horizon, last_value, dtype=float)
+from sklearn.ensemble import GradientBoostingRegressor
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 
-def seasonal_naive_forecast(train_series: pd.Series, horizon: int, season_length: int = 7) -> np.ndarray:
-    """Repeats the value from the same point in the previous season (e.g. same weekday)."""
-    tail = train_series.iloc[-season_length:].values
-    reps = int(np.ceil(horizon / season_length))
-    return np.tile(tail, reps)[:horizon]
+# -------------------------------
+# SARIMA
+# -------------------------------
+def sarima_forecast(series, steps=7):
+    model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,7))
+    res = model.fit(disp=False)
+    forecast = res.get_forecast(steps=steps)
+    return forecast.predicted_mean, forecast.conf_int()
 
 
-def moving_average_forecast(train_series: pd.Series, horizon: int, window: int = 7) -> np.ndarray:
-    avg = train_series.iloc[-window:].mean()
-    return np.full(horizon, avg, dtype=float)
+# -------------------------------
+# Exponential Smoothing
+# -------------------------------
+def ets_forecast(series, steps=7):
+    model = ExponentialSmoothing(series, trend="add", seasonal="add", seasonal_periods=7)
+    fit = model.fit()
+    forecast = fit.forecast(steps)
+    
+    # simple interval
+    std = np.std(series)
+    lower = forecast - 1.96 * std
+    upper = forecast + 1.96 * std
+    
+    return forecast, pd.DataFrame({"lower": lower, "upper": upper})
 
 
-# ---------------------------------------------------------------------------
-# Statistical models
-# ---------------------------------------------------------------------------
-def sarima_forecast(train_series: pd.Series, horizon: int,
-                     order=(1, 1, 1), seasonal_order=(1, 1, 1, 7)) -> np.ndarray:
-    from statsmodels.tsa.statespace.sarimax import SARIMAX
+# -------------------------------
+# GBM (BEST MODEL)
+# -------------------------------
+def gbm_forecast(df, target_col="revenue", steps=7):
+    df = df.copy()
 
-    model = SARIMAX(train_series, order=order, seasonal_order=seasonal_order,
-                     enforce_stationarity=False, enforce_invertibility=False)
-    fitted = model.fit(disp=False)
-    forecast = fitted.forecast(steps=horizon)
-    return np.asarray(forecast)
+    # features
+    df["lag1"] = df[target_col].shift(1)
+    df["lag7"] = df[target_col].shift(7)
+    df["rolling_mean"] = df[target_col].rolling(7).mean()
 
+    df = df.dropna()
 
-def exponential_smoothing_forecast(train_series: pd.Series, horizon: int,
-                                    seasonal_periods: int = 7) -> np.ndarray:
-    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    X = df[["lag1", "lag7", "rolling_mean"]]
+    y = df[target_col]
 
-    model = ExponentialSmoothing(
-        train_series, trend="add", seasonal="add",
-        seasonal_periods=seasonal_periods, initialization_method="estimated",
-    )
-    fitted = model.fit()
-    forecast = fitted.forecast(horizon)
-    return np.asarray(forecast)
+    model = GradientBoostingRegressor()
+    model.fit(X, y)
 
+    last_row = df.iloc[-1:].copy()
+    preds = []
 
-# ---------------------------------------------------------------------------
-# Advanced models
-# ---------------------------------------------------------------------------
-def prophet_forecast(train_df: pd.DataFrame, horizon: int) -> np.ndarray:
-    """train_df must have columns ['ds', 'y']."""
-    from prophet import Prophet
+    for _ in range(steps):
+        pred = model.predict(last_row[["lag1", "lag7", "rolling_mean"]])[0]
+        preds.append(pred)
 
-    model = Prophet(weekly_seasonality=True, yearly_seasonality=False, daily_seasonality=False)
-    model.fit(train_df[["ds", "y"]])
-    future = model.make_future_dataframe(periods=horizon, freq="D", include_history=False)
-    forecast = model.predict(future)
-    return forecast["yhat"].values
+        # update features
+        last_row["lag7"] = last_row["lag1"]
+        last_row["lag1"] = pred
+        last_row["rolling_mean"] = (last_row["rolling_mean"] * 6 + pred) / 7
 
+    preds = pd.Series(preds)
 
-def gradient_boosting_forecast(train_X: pd.DataFrame, train_y: pd.Series,
-                                test_X: pd.DataFrame, random_state: int = 42) -> np.ndarray:
-    """Supervised regression on engineered lag/rolling/calendar features.
-    Unlike the other models here, this needs the test-period features
-    up front (produced by feature_engineering.py) rather than just a horizon."""
-    from sklearn.ensemble import GradientBoostingRegressor
+    std = np.std(y)
+    lower = preds - 1.96 * std
+    upper = preds + 1.96 * std
 
-    model = GradientBoostingRegressor(random_state=random_state, n_estimators=300,
-                                       max_depth=3, learning_rate=0.05)
-    model.fit(train_X, train_y)
-    return model.predict(test_X)
+    return preds, pd.DataFrame({"lower": lower, "upper": upper})
 
 
-# ---------------------------------------------------------------------------
-# Registry so train.py can loop over "all baseline+statistical models" easily
-# ---------------------------------------------------------------------------
-SERIES_MODELS = {
-    "Naive": naive_forecast,
-    "Seasonal Naive": seasonal_naive_forecast,
-    "Moving Average (7d)": moving_average_forecast,
-    "SARIMA": sarima_forecast,
-    "Exponential Smoothing": exponential_smoothing_forecast,
-}
+# -------------------------------
+# AUTO MODEL SELECTION
+# -------------------------------
+def best_forecast(df, store_id, steps=7):
+    series = df["revenue"]
+
+    try:
+        preds, ci = gbm_forecast(df, steps=steps)
+        model_name = "GBM"
+    except:
+        try:
+            preds, ci = sarima_forecast(series, steps)
+            model_name = "SARIMA"
+        except:
+            preds, ci = ets_forecast(series, steps)
+            model_name = "ETS"
+
+    return preds, ci, model_name
